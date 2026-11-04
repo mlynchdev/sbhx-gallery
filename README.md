@@ -77,49 +77,152 @@ The dev sign-in (`/auth/dev-login`) works only when both `DEV_LOGIN=1` and Flask
 
 ## Production setup
 
-### 1. D1
+This assumes a small Linux server on your network, reached through a Cloudflare Tunnel. The examples use `photos.sbhackerspace.com` for the site and `img.sbhackerspace.com` for the bucket. They must be different hostnames: one is served by Flask, the other by R2.
+
+### 1. Cloudflare: D1 and R2
+
+On any machine with Node, run `npx wrangler login` once, then:
 
 ```bash
-wrangler d1 create photo-share                  # paste the id into wrangler.toml
-wrangler d1 migrations apply photo-share --remote   # also applies 0002_photo_variants.sql to an existing DB
+wrangler d1 create photo-share                      # paste the id into wrangler.toml
+wrangler d1 migrations apply photo-share --remote   # re-run after pulling new migrations
+wrangler r2 bucket create sbhx-photos
+wrangler r2 bucket cors set sbhx-photos --file r2-cors.json
 ```
 
-Create a Cloudflare API token with **Account → D1 → Edit**. Then set `DB_BACKEND=d1`, `CF_ACCOUNT_ID`, `D1_DATABASE_ID` and `CF_API_TOKEN`.
+- **`r2-cors.json`.** Its `origins` must list the site's origin (`https://photos.sbhackerspace.com`), not the bucket's. Keep `http://localhost:5050` only if you test locally against the real bucket. It must allow the `PUT` method and the `content-type` header. Browsers send a preflight request for these uploads, so without this every PUT fails with a network error, which the app reports as a possible CORS problem. No other headers are needed: the signature is in the URL query string.
+- **Public bucket domain.** In the dashboard, open **R2 → sbhx-photos → Settings → Custom Domains** and connect `img.sbhackerspace.com`. Galleries then load images from Cloudflare's CDN. If you skip this and leave `R2_PUBLIC_BASE_URL` empty, the app signs a GET URL for every image instead.
+- **Tokens.**
+  - D1: **My Profile → API Tokens → Create Token**, with permission **Account → D1 → Edit**. This gives `CF_API_TOKEN`.
+  - R2: **R2 → Manage API Tokens → Create**, with **Object Read & Write** on `sbhx-photos`. This gives `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`.
+  - `CF_ACCOUNT_ID` is on the dashboard's account home page; `D1_DATABASE_ID` is printed by `wrangler d1 create`.
 
 Flask is a WSGI app and can't run inside a Cloudflare Worker, so it reaches D1 over the REST API. Each query is an HTTPS round trip, roughly 50–150 ms from outside Cloudflare. A page makes one to three queries, which is fine at this scale.
 
-### 2. R2
+**Public originals.** A public custom domain serves every key in the bucket, originals included. Their keys are unguessable, but anyone with a key can fetch it. To make originals private, add a Cloudflare WAF rule on `img.sbhackerspace.com` blocking paths matching `*/original.*`. **Download original** would then need presigned GETs from the S3 endpoint, which it already uses. With `RETAIN_ORIGINALS=0` there's nothing to hide.
 
-```bash
-wrangler r2 bucket create sbhx-photos
-wrangler r2 bucket cors set sbhx-photos --file r2-cors.json   # edit the origins first
-```
-
-- Create an R2 API token with **Object Read & Write** on the bucket. Set `STORAGE_BACKEND=r2`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`.
-- Galleries are public, so connect a custom domain to the bucket (for example `photos.sbhackerspace.com`) and set `R2_PUBLIC_BASE_URL`. Images then load from Cloudflare's CDN. If you leave it empty, the app signs a GET URL for every image instead.
-- **CORS** (`r2-cors.json`) must allow your site's origin, the `PUT` method and the `content-type` header. Browsers send a preflight request for these uploads, so without this every PUT fails with a network error. The app reports that as a possible CORS problem. No other headers are needed: the signature is in the URL query string. Edit `origins` to your real domain before applying it.
-- **Abandoned uploads.** Run `uv run flask --app app cleanup-uploads` daily, for example from cron. It deletes objects under `users/` that are older than `ORPHAN_MAX_AGE_HOURS` (default 24) and that no photo or variant row references. Use `--dry-run` to preview. An R2 lifecycle rule can't do this, because it can't tell an orphan from a published photo.
-- **Public originals.** A public custom domain serves every key in the bucket, originals included. Their keys are unguessable, but anyone with a key can fetch it. To make originals private, add a Cloudflare WAF rule on that hostname blocking paths matching `*/original.*`. **Download original** would then need presigned GETs from the S3 endpoint, which it already uses.
-
-### 3. Authentik
+### 2. Authentik
 
 1. **Applications → Providers → Create → OAuth2/OpenID Provider**
    - Client type: Confidential
-   - Redirect URI: `https://<your-host>/auth/callback`
+   - Redirect URIs: `https://photos.sbhackerspace.com/auth/callback` and `https://photos.sbhackerspace.com/`. The second one is where Sign out returns to; recent Authentik versions only redirect to listed URIs.
    - Scopes: `openid`, `profile`, `email`
 2. **Applications → Create**, slug `photo-share`, using that provider.
-3. Set `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and
-   `OIDC_DISCOVERY_URL=https://<authentik-host>/application/o/photo-share/.well-known/openid-configuration`.
+3. Note the client ID and secret for the next step. The discovery URL is `https://<authentik-host>/application/o/photo-share/.well-known/openid-configuration`.
 
 When someone signs in for the first time, the app creates their account. The username comes from the `preferred_username` claim, and the app adds `-2`, `-3` and so on if that name is taken. Users are matched on `sub`, so renaming someone in Authentik won't split their account.
 
-### 4. Run
+### 3. Install on the server
+
+Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv run gunicorn -w 2 -b 0.0.0.0:8000 "app:create_app()"
+sudo useradd --system --create-home --home-dir /opt/photo-share photo-share
+sudo -u photo-share git clone https://github.com/mlynchdev/sbhx-gallery.git /opt/photo-share/app
+cd /opt/photo-share/app
+sudo -u photo-share uv sync --frozen --no-dev
+sudo -u photo-share install -m 600 /dev/null .env
 ```
 
-Put it behind HTTPS (a Cloudflare Tunnel works well) and set `SESSION_COOKIE_SECURE=1` and `DEV_LOGIN=0`. `ProxyFix` trusts a single proxy hop, so callback URLs come out as `https://`.
+The app reads `.env` from its working directory. Fill it in:
+
+```bash
+SECRET_KEY=<output of: python3 -c 'import secrets; print(secrets.token_hex(32))'>
+FLASK_DEBUG=0
+SESSION_COOKIE_SECURE=1
+DEV_LOGIN=0
+
+DB_BACKEND=d1
+CF_ACCOUNT_ID=...
+CF_API_TOKEN=...
+D1_DATABASE_ID=...
+
+STORAGE_BACKEND=r2
+R2_BUCKET=sbhx-photos
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_PUBLIC_BASE_URL=https://img.sbhackerspace.com
+
+OIDC_DISCOVERY_URL=https://<authentik-host>/application/o/photo-share/.well-known/openid-configuration
+OIDC_CLIENT_ID=...
+OIDC_CLIENT_SECRET=...
+
+RETAIN_ORIGINALS=0   # optional; see "What's stored" above
+```
+
+Outside debug mode the app refuses to start with a missing, placeholder or short `SECRET_KEY`, because that key signs sessions and upload tokens. It also logs a warning if `DB_BACKEND` or `STORAGE_BACKEND` is still on the local development backend.
+
+### 4. Run it with systemd
+
+`/etc/systemd/system/photo-share.service`:
+
+```ini
+[Unit]
+Description=SBHX photo gallery
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=photo-share
+WorkingDirectory=/opt/photo-share/app
+ExecStart=/opt/photo-share/app/.venv/bin/gunicorn -w 2 -b 127.0.0.1:8000 "app:create_app()"
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now photo-share
+curl -I http://127.0.0.1:8000/       # expect 200
+journalctl -u photo-share -f          # logs
+```
+
+Bind to `127.0.0.1`, not `0.0.0.0`. `ProxyFix` trusts one proxy's `X-Forwarded-Proto` and `X-Forwarded-Host`, so only the tunnel should be able to reach gunicorn.
+
+### 5. Cloudflare Tunnel
+
+Install `cloudflared` on the server. The simplest setup is dashboard-managed: **Zero Trust → Networks → Tunnels → Create a tunnel**, run the install command it shows (which registers a `cloudflared` service with a token), then add a public hostname `photos.sbhackerspace.com` with service `http://127.0.0.1:8000`.
+
+If you already run a tunnel for Authentik, add this hostname to it instead of creating a second one. For a locally managed tunnel, the ingress rule in `config.yml` is:
+
+```yaml
+ingress:
+  - hostname: photos.sbhackerspace.com
+    service: http://127.0.0.1:8000
+  - service: http_status:404
+```
+
+The tunnel terminates HTTPS and sends `X-Forwarded-Proto: https`, so callback URLs come out as `https://`.
+
+### 6. Abandoned-upload cleanup
+
+A closed tab mid-upload leaves objects that no photo row references. Add a daily cron job as the `photo-share` user (`sudo crontab -u photo-share -e`):
+
+```cron
+17 4 * * * cd /opt/photo-share/app && .venv/bin/flask --app app cleanup-uploads
+```
+
+It deletes objects under `users/` that are older than `ORPHAN_MAX_AGE_HOURS` (default 24) and that no photo or variant row references. Run it by hand with `--dry-run` first to preview. An R2 lifecycle rule can't do this, because it can't tell an orphan from a published photo.
+
+### 7. Check it
+
+1. Open `https://photos.sbhackerspace.com/` and sign in through Authentik.
+2. Upload a photo. If it fails with a network error, check the CORS origins (step 1).
+3. Open the photo page and confirm the image loads from `img.sbhackerspace.com`.
+4. Sign out and confirm you land back on the site.
+
+### Updating
+
+```bash
+cd /opt/photo-share/app
+sudo -u photo-share git pull
+sudo -u photo-share uv sync --frozen --no-dev
+# if migrations/ changed, from the machine where you ran wrangler login:
+#   wrangler d1 migrations apply photo-share --remote
+sudo systemctl restart photo-share
+```
 
 ## Routes
 

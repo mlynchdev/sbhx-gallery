@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from conftest import image_bytes
 
-from app import models
+from app import create_app, models
 from app.storage import storage
 
 
@@ -483,3 +483,13 @@ def test_without_originals_retry_is_idempotent_and_failures_clean_up(app):
     _, res = upload(client, without_original(standard_files()), skip={"detail"})
     assert res.status_code == 400
     assert len(stored_keys(app)) == 2  # only the first photo's files remain
+
+
+@pytest.mark.parametrize("key", ["", "dev-insecure-change-me", "change-me-to-a-long-random-string", "short"])
+def test_production_refuses_placeholder_secret_key(key):
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        create_app({"DEBUG": False, "TESTING": False, "SECRET_KEY": key})
+
+
+def test_production_starts_with_real_secret_key():
+    assert create_app({"DEBUG": False, "TESTING": False, "SECRET_KEY": "x" * 64})

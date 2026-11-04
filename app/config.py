@@ -5,8 +5,13 @@ def _bool(name: str, default: bool = False) -> bool:
     return os.environ.get(name, str(default)).lower() in {"1", "true", "yes", "on"}
 
 
+DEFAULT_SECRET_KEY = "dev-insecure-change-me"
+# Placeholder values that must never sign production sessions.
+PLACEHOLDER_SECRET_KEYS = {"", DEFAULT_SECRET_KEY, "change-me-to-a-long-random-string"}
+
+
 class Config:
-    SECRET_KEY = os.environ.get("SECRET_KEY", "dev-insecure-change-me")
+    SECRET_KEY = os.environ.get("SECRET_KEY", DEFAULT_SECRET_KEY)
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = _bool("SESSION_COOKIE_SECURE", False)
