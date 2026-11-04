@@ -34,6 +34,8 @@ from .views import clean_photo_fields, filesize
 bp = Blueprint("uploads", __name__, cli_group=None)
 
 ORIGINAL = "original"
+# With RETAIN_ORIGINALS off, this variant becomes the photo's main file.
+PRIMARY_WITHOUT_ORIGINAL = "detail"
 
 
 class UploadRejected(Exception):
@@ -55,18 +57,22 @@ def _validate_request(files) -> dict:
     are only used to presign; finalize re-checks the stored objects."""
     cfg = current_app.config
     variants = cfg["IMAGE_VARIANTS"]
-    expected = {ORIGINAL, *variants}
     if not isinstance(files, list):
         raise UploadRejected("Missing file list.")
     by_role = {f.get("role"): f for f in files if isinstance(f, dict)}
+    reusing = any(by_role.get(role, {}).get("reuse_original") for role in variants)
+    # The original is uploaded when originals are kept, or when it doubles as
+    # a variant (it already fits and re-encoding wouldn't shrink it).
+    expected = set(variants) | ({ORIGINAL} if cfg["RETAIN_ORIGINALS"] or reusing else set())
     if set(by_role) != expected or len(files) != len(expected):
         raise UploadRejected(f"Expected exactly these files: {', '.join(sorted(expected))}.")
 
-    original = by_role[ORIGINAL]
-    if original.get("content_type") not in cfg["ALLOWED_CONTENT_TYPES"]:
-        raise UploadRejected("Unsupported original format. Use JPEG, PNG, WebP, GIF, HEIC or AVIF.")
-    if not _positive_int(original.get("size")) or original["size"] > cfg["MAX_UPLOAD_BYTES"]:
-        raise UploadRejected(f"The original must be under {filesize(cfg['MAX_UPLOAD_BYTES'])}.")
+    original = by_role.get(ORIGINAL)
+    if original is not None:
+        if original.get("content_type") not in cfg["ALLOWED_CONTENT_TYPES"]:
+            raise UploadRejected("Unsupported original format. Use JPEG, PNG, WebP, GIF, HEIC or AVIF.")
+        if not _positive_int(original.get("size")) or original["size"] > cfg["MAX_UPLOAD_BYTES"]:
+            raise UploadRejected(f"The original must be under {filesize(cfg['MAX_UPLOAD_BYTES'])}.")
 
     for role, settings in variants.items():
         spec = by_role[role]
@@ -211,24 +217,30 @@ def create_photo():
     files = claims["files"]
 
     # A retry after a lost response: the photo already exists, return it.
-    existing = models.get_photo_by_key(files[ORIGINAL]["k"])
+    primary = files.get(ORIGINAL) or files[PRIMARY_WITHOUT_ORIGINAL]
+    existing = models.get_photo_by_key(primary["k"])
     if existing:
         return jsonify(id=existing["id"], url=url_for("main.photo_detail", photo_id=existing["id"])), 200
 
     try:
-        original, header = _verify_object(ORIGINAL, files[ORIGINAL])
-        records = {ORIGINAL: original}
+        records = {}
+        if ORIGINAL in files:
+            original, header = _verify_object(ORIGINAL, files[ORIGINAL])
         for role, spec in files.items():
             if role == ORIGINAL:
                 continue
             records[role] = (_reuse_original(role, spec, original, header) if spec.get("reuse")
                              else _verify_object(role, spec)[0])
         _check_variant_shapes(records)
+        if ORIGINAL not in files:
+            # No original kept: the detail image is the photo's main file
+            # (and what Download serves).
+            detail = records[PRIMARY_WITHOUT_ORIGINAL]
+            original = {k: detail[k] for k in ("object_key", "content_type", "size_bytes")}
     except UploadRejected as e:
         _delete_unreferenced(files)
         return jsonify(error=f"{e} Nothing was saved; please try the upload again."), 400
 
-    original = records.pop(ORIGINAL)
     photo_id = models.create_photo(
         g.user["id"], title, description, original["object_key"], original["content_type"],
         original["size_bytes"], list(records.values()),

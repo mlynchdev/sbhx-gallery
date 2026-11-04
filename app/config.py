@@ -35,6 +35,11 @@ class Config:
     ORPHAN_MAX_AGE_HOURS = int(os.environ.get("ORPHAN_MAX_AGE_HOURS", "24"))
 
     # Originals: kept as uploaded and offered through the Download button.
+    # Turn off to store only the thumb and detail images: far less storage
+    # (a 10 MP photo: ~0.45 MB instead of ~12 MB), but Download then gives the
+    # detail image and full-resolution zoom is gone for new uploads. An
+    # original that already fits the detail size is still kept, as the detail.
+    RETAIN_ORIGINALS = _bool("RETAIN_ORIGINALS", True)
     MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
     ALLOWED_CONTENT_TYPES = {
         "image/jpeg": "jpg",

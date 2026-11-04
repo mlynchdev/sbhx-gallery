@@ -412,3 +412,74 @@ def test_abort_with_reused_original(app):
     put_all(client, session, files)
     assert client.post("/api/uploads/abort", json={"upload_token": session["upload_token"]}).status_code == 204
     assert stored_keys(app) == set()
+
+
+# ----- RETAIN_ORIGINALS off -----
+
+def without_original(files):
+    return {r: v for r, v in files.items() if r != "original"}
+
+
+def test_without_originals_only_variants_are_stored(app):
+    app.config["RETAIN_ORIGINALS"] = False
+    client = app.test_client()
+    login(client, "alice")
+    session, res = upload(client, without_original(standard_files()))
+    assert res.status_code == 201
+    assert sorted(u["role"] for u in session["uploads"]) == ["detail", "thumb"]
+    detail_key = next(u["key"] for u in session["uploads"] if u["role"] == "detail")
+
+    with app.app_context():
+        photo = models.get_photo(res.get_json()["id"])
+    assert photo["object_key"] == photo["detail_key"] == detail_key
+    assert photo["content_type"] == "image/webp"
+    assert len(stored_keys(app)) == 2
+
+    page = app.test_client().get(res.get_json()["url"]).get_data(as_text=True)
+    assert ">Download<" in page and "Download original" not in page
+    assert "<dt>Original</dt>" not in page
+    assert f"{detail_key}?download=" in page
+
+    assert client.post(f"/photos/{photo['id']}/delete").status_code == 302
+    assert stored_keys(app) == set()
+
+
+def test_without_originals_an_original_is_refused(app):
+    app.config["RETAIN_ORIGINALS"] = False
+    client = app.test_client()
+    login(client, "alice")
+    res = presign(client, standard_files())
+    assert res.status_code == 400
+    assert "detail, thumb" in res.get_json()["error"]
+
+
+def test_with_originals_the_original_is_required(app):
+    client = app.test_client()
+    login(client, "alice")
+    res = presign(client, without_original(standard_files()))
+    assert res.status_code == 400
+    assert "detail, original, thumb" in res.get_json()["error"]
+
+
+def test_without_originals_a_small_original_is_still_kept_as_detail(app):
+    app.config["RETAIN_ORIGINALS"] = False
+    client = app.test_client()
+    login(client, "alice")
+    files, detail = reuse_files(image_bytes("WEBP", 1500, 2000), "image/webp", (1500, 2000))
+    res, session = upload_reusing(client, files, detail)
+    assert res.status_code == 201
+    page = app.test_client().get(res.get_json()["url"]).get_data(as_text=True)
+    assert "Download original" in page
+
+
+def test_without_originals_retry_is_idempotent_and_failures_clean_up(app):
+    app.config["RETAIN_ORIGINALS"] = False
+    client = app.test_client()
+    login(client, "alice")
+    session, first = upload(client, without_original(standard_files()))
+    again = client.post("/api/photos", json={"upload_token": session["upload_token"], "title": "Bracket"})
+    assert again.status_code == 200 and again.get_json()["id"] == first.get_json()["id"]
+
+    _, res = upload(client, without_original(standard_files()), skip={"detail"})
+    assert res.status_code == 400
+    assert len(stored_keys(app)) == 2  # only the first photo's files remain

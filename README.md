@@ -34,16 +34,19 @@ The browser shrinks each photo before uploading it, so galleries load small file
    Only then does it write the `photos` row and its `photo_variants` rows. The check reads headers, not pixels, so it can't detect a file that's truncated or corrupt further in.
 5. **Failure.** If any PUT fails, the browser calls `POST /api/uploads/abort`, which deletes whatever arrived. A rejected publish deletes everything. Saving is idempotent, so retrying after a lost response returns the same photo. A closed tab leaves objects with no row, which `flask cleanup-uploads` removes (below).
 
-**What's stored.** The original is kept exactly as uploaded, and **Download original** serves it. The table below shows sizes from testing:
+**What's stored.** By default the original is kept exactly as uploaded, and **Download original** serves it. Sizes from testing:
 
 | Original | Thumb | Detail | Detail as share of original |
 |---|---|---|---|
 | 12 MP JPEG, 4.9 MB | 28 KB WebP | 0.9 MB WebP | ~19% |
+| 10.5 MP JPEG, 11.7 MB | 20 KB WebP | 0.42 MB WebP | ~4% |
 | 48 MP JPEG, 17.8 MB | 15 KB WebP | 0.5 MB WebP | ~3% |
 
-Each photo therefore costs 103–120% of its original's storage, and the uploader sends that much. In return, everyone viewing a gallery downloads under 1% of the original per card. The original is also there to re-generate variants later, for example with a better encoder.
+Keeping originals costs 103–120% of the original's size per photo. Set `RETAIN_ORIGINALS=0` to store only the thumb and detail images. The browser then never uploads the original, and the detail image becomes the photo's main file: the photo page offers **Download** for the 2048 px image instead of **Download original**. Against R2's 10 GB free tier, that's roughly 1,700 phone photos with originals versus about 10,000 without.
 
-**Small originals.** If a photo already fits the detail size (2048 px), its "detail" would only be a re-encode. When that re-encode comes out no smaller than the original, the browser skips it: the detail row points at the original's key and nothing extra is uploaded. A 1500×2000 WebP went from 3 stored files (936 KB) to 2 (465 KB). This applies only to JPEG, PNG and WebP originals; a GIF would animate on the photo page, and not every browser shows HEIC/AVIF. The server checks the original's real header size against the declared size, allowing width and height to swap for EXIF-rotated JPEGs.
+What you lose without originals: zooming past 2048 px. In a side-by-side test, very fine knurling and turned finishes were slightly softer than in the original at full resolution; at photo-page size the two were indistinguishable. You can't re-make variants later at a bigger size or with a better encoder, either. Photos uploaded while originals were kept keep them, and the setting only affects new uploads.
+
+**Small originals.** If a photo already fits the detail size (2048 px), whether or not originals are kept, its "detail" would only be a re-encode. When that re-encode comes out no smaller than the original, the browser skips it: the detail row points at the original's key and nothing extra is uploaded. A 1500×2000 WebP went from 3 stored files (936 KB) to 2 (465 KB). This applies only to JPEG, PNG and WebP originals; a GIF would animate on the photo page, and not every browser shows HEIC/AVIF. The server checks the original's real header size against the declared size, allowing width and height to swap for EXIF-rotated JPEGs.
 
 **Older photos** (uploaded before variants existed) have no `photo_variants` rows. Pages fall back to the original for them, so no migration of existing files is needed.
 

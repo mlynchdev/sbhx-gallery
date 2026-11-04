@@ -124,6 +124,7 @@ def upload():
         "maxOriginalBytes": cfg["MAX_UPLOAD_BYTES"],
         "maxVariantBytes": cfg["MAX_VARIANT_BYTES"],
         "reusableOriginalTypes": list(cfg["REUSABLE_ORIGINAL_TYPES"]),
+        "retainOriginal": cfg["RETAIN_ORIGINALS"],
     }
     return render_template(
         "photos/upload.html",

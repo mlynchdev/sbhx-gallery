@@ -51,9 +51,20 @@
       li.textContent = f.reuse_original
         ? LABELS[f.role] + ': ' + dims + 'uses the original (re-encoding gave ' + kb(f.encodedSize) + ', more than ' + kb(f.size) + ')'
         : LABELS[f.role] + ': ' + dims + fmt(f.content_type) + ' · ' + kb(f.size);
+      if (f.role === 'original' && !keepsOriginal(result)) li.textContent += ' · not stored';
       summary.appendChild(li);
     });
     summary.hidden = false;
+  }
+
+  // The original is uploaded when the site keeps originals, or when it is
+  // itself the detail image (small enough already).
+  function keepsOriginal(result) {
+    return config.retainOriginal || result.variants.some(function (v) { return v.reuse_original; });
+  }
+
+  function filesToUpload(result) {
+    return keepsOriginal(result) ? result.variants.concat([result.original]) : result.variants.slice();
   }
 
   function chooseFile(file) {
@@ -187,7 +198,7 @@
       if (!result) throw new Error(errorBox.textContent || 'Choose an image to upload.');
       setBusy(true, 'Uploading...');
       setStatus('Requesting upload links...');
-      var files = result.variants.concat([result.original]);
+      var files = filesToUpload(result);
       return postJSON(form.dataset.presignUrl, {
         files: files.map(function (f) {
           var spec = { role: f.role, content_type: f.content_type, size: f.size };

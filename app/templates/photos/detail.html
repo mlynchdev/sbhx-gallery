@@ -21,17 +21,21 @@
         <p class="photo-maker">by <a href="{{ url_for('main.profile', username=photo.username) }}">{{ photo.display_name }}</a></p>
         {% if photo.description %}<p class="photo-description">{{ photo.description }}</p>{% endif %}
 
+        {# With RETAIN_ORIGINALS off the main file is the detail image itself. #}
+        {% set has_original = not photo.object_key.rsplit('/', 1)[-1].startswith('detail.') %}
         <dl class="spec-list">
           <dt>Uploaded</dt><dd>{{ photo.created_at | date }}</dd>
           {% if photo.updated_at != photo.created_at %}<dt>Updated</dt><dd>{{ photo.updated_at | date }}</dd>{% endif %}
-          <dt>Original</dt><dd>{{ photo.content_type.split('/')[-1] | upper }} &middot; {{ photo.size_bytes | filesize }}</dd>
+          {% if has_original %}
+            <dt>Original</dt><dd>{{ photo.content_type.split('/')[-1] | upper }} &middot; {{ photo.size_bytes | filesize }}</dd>
+          {% endif %}
           {% if photo.detail_key %}
             <dt>Shown</dt><dd>{{ photo.detail_width }}&times;{{ photo.detail_height }} {{ photo.detail_content_type.split('/')[-1] | upper }} &middot; {{ photo.detail_size_bytes | filesize }}</dd>
           {% endif %}
         </dl>
 
         <div class="photo-actions">
-          <a href="{{ photo_download(photo) }}" class="btn btn-primary">Download original</a>
+          <a href="{{ photo_download(photo) }}" class="btn btn-primary">{{ 'Download original' if has_original else 'Download' }}</a>
           {% if current_user and current_user.id == photo.user_id %}
             <a href="{{ url_for('main.edit_photo', photo_id=photo.id) }}" class="btn btn-ghost">Edit</a>
           {% endif %}
