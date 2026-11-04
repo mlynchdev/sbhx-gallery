@@ -3,7 +3,7 @@ from flask import Flask, render_template
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from . import auth, db, storage, views
+from . import auth, db, storage, uploads, views
 from .config import Config
 
 csrf = CSRFProtect()
@@ -25,6 +25,7 @@ def create_app(config_overrides: dict | None = None) -> Flask:
     csrf.exempt(storage.local_bp)  # guarded by its own signed token
     auth.init_app(app)
     app.register_blueprint(views.bp)
+    app.register_blueprint(uploads.bp)
 
     for code in (403, 404, 503):
         app.register_error_handler(

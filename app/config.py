@@ -29,13 +29,47 @@ class Config:
     R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/")
 
     UPLOAD_URL_TTL_SECONDS = int(os.environ.get("UPLOAD_URL_TTL_SECONDS", "600"))
+    # How long a browser has to finish all uploads and save the photo.
+    UPLOAD_SESSION_TTL_SECONDS = int(os.environ.get("UPLOAD_SESSION_TTL_SECONDS", "3600"))
+    # Unreferenced objects older than this are removed by `flask cleanup-uploads`.
+    ORPHAN_MAX_AGE_HOURS = int(os.environ.get("ORPHAN_MAX_AGE_HOURS", "24"))
+
+    # Originals: kept as uploaded and offered through the Download button.
     MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
     ALLOWED_CONTENT_TYPES = {
         "image/jpeg": "jpg",
         "image/png": "png",
         "image/webp": "webp",
         "image/gif": "gif",
+        # Accepted only if the browser can decode them to build the variants
+        # (Safari can; Chrome and Firefox can't decode HEIC).
+        "image/heic": "heic",
+        "image/heif": "heif",
+        "image/avif": "avif",
     }
+
+    # Browser-generated derivatives. Role names are fixed; sizes are not.
+    IMAGE_VARIANTS = {
+        "thumb": {
+            "max_edge": int(os.environ.get("THUMB_MAX_EDGE", "640")),
+            "quality": float(os.environ.get("THUMB_QUALITY", "0.85")),
+        },
+        "detail": {
+            "max_edge": int(os.environ.get("DETAIL_MAX_EDGE", "2048")),
+            "quality": float(os.environ.get("DETAIL_QUALITY", "0.90")),
+        },
+    }
+    # Canvas encoders: WebP where the browser can encode it (Chromium, Firefox),
+    # JPEG otherwise (Safari returns PNG for WebP requests).
+    VARIANT_PREFERRED_TYPE = "image/webp"
+    VARIANT_FALLBACK_TYPE = "image/jpeg"
+    VARIANT_CONTENT_TYPES = {"image/webp": "webp", "image/jpeg": "jpg"}
+    # When an original already fits a variant and re-encoding it would come
+    # out larger, the variant points at the original instead, if it's one of
+    # these. GIF is excluded so the photo page shows a still frame, and
+    # HEIC/AVIF because not every browser displays them.
+    REUSABLE_ORIGINAL_TYPES = ("image/jpeg", "image/png", "image/webp")
+    MAX_VARIANT_BYTES = int(os.environ.get("MAX_VARIANT_BYTES", str(10 * 1024 * 1024)))
 
     # Authentik OIDC. Discovery URL looks like
     # https://auth.example.com/application/o/<app-slug>/.well-known/openid-configuration

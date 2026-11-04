@@ -3,7 +3,9 @@
   {% for photo in photos %}
     <a class="gallery-card" href="{{ url_for('main.photo_detail', photo_id=photo.id) }}">
       <div class="gallery-image">
-        <img src="{{ photo_src(photo) }}" alt="{{ photo.title }}" loading="lazy">
+        {# Thumbnail only (no srcset): on 2x screens a srcset would pull the 2048 px detail. #}
+        <img src="{{ photo_src(photo, 'thumb') }}" {{ photo_dims(photo, 'thumb') | safe }} alt="{{ photo.title }}"
+             {% if loop.index > 3 %}loading="lazy"{% endif %} decoding="async">
       </div>
       <div class="gallery-content">
         {% if show_author %}<span class="gallery-author">@{{ photo.username }}</span>{% endif %}

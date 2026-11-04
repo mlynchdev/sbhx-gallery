@@ -9,11 +9,51 @@ A Flask app where SBHX members sign in with Authentik, upload photos of parts th
 
 ## How an upload works
 
-1. The browser calls `POST /api/uploads` with the file's type and size. The server checks both and returns a presigned PUT URL for `users/<user_id>/<uuid>.<ext>`.
-2. The browser PUTs the file directly to R2, so the image never passes through Flask.
-3. The browser calls `POST /api/photos` with the key, title and description. The server checks that the key belongs to the current user, HEADs the object in R2 to confirm it exists and that its size and type are allowed, and then inserts the row into D1.
+The browser shrinks each photo before uploading it, so galleries load small files while the full-resolution original is kept.
 
-The `photos` table stores the R2 `object_key`, not a full URL. View and download URLs are built when the page renders, so moving the bucket to a new domain doesn't break old rows. The Download button uses a presigned GET with `Content-Disposition: attachment`.
+1. **Prepare (browser, `static/js/imageprep.js`).**
+   - It sniffs the file's real format from its first bytes; the browser's `file.type` is only a guess from the extension.
+   - It decodes the image once with `createImageBitmap(..., {imageOrientation: 'from-image'})`, which applies EXIF rotation, so portrait phone photos come out upright.
+   - It builds both variants from the original's pixels in one pass, using an area-average (box) downscaler. That pass reads about 4 MP strips, so memory stays bounded.
+   - It never upscales and always keeps the aspect ratio.
+   - It encodes each variant:
+
+     | Variant | Longest edge | Quality | Used for |
+     |---|---|---|---|
+     | `thumb` | 640 px | 0.85 | gallery cards |
+     | `detail` | 2048 px | 0.90 | photo page |
+
+     Settings live in `IMAGE_VARIANTS` and can be overridden with `THUMB_MAX_EDGE`, `THUMB_QUALITY`, `DETAIL_MAX_EDGE` and `DETAIL_QUALITY`.
+2. **Presign (`POST /api/uploads`).** The browser sends each file's role, actual Blob type, byte size and, for variants, its pixel size. Flask checks them against the limits and picks the keys: `users/<user_id>/<upload_id>/{original,thumb,detail}.<ext>`. It then presigns one PUT per file with that exact `Content-Type`, and returns a signed upload token listing what it authorized.
+3. **Upload.** The browser PUTs each raw Blob straight to R2, one at a time, with up to 3 attempts for network errors and 5xx responses. R2 credentials stay on the server.
+4. **Publish (`POST /api/photos`).** For every object, Flask:
+   - HEADs it to confirm it exists, has the signed type and is within the size limit;
+   - reads its first 64 KB to confirm the bytes really are that format and the header's pixel size matches what was declared;
+   - checks that the thumb is the detail scaled down.
+
+   Only then does it write the `photos` row and its `photo_variants` rows. The check reads headers, not pixels, so it can't detect a file that's truncated or corrupt further in.
+5. **Failure.** If any PUT fails, the browser calls `POST /api/uploads/abort`, which deletes whatever arrived. A rejected publish deletes everything. Saving is idempotent, so retrying after a lost response returns the same photo. A closed tab leaves objects with no row, which `flask cleanup-uploads` removes (below).
+
+**What's stored.** The original is kept exactly as uploaded, and **Download original** serves it. The table below shows sizes from testing:
+
+| Original | Thumb | Detail | Detail as share of original |
+|---|---|---|---|
+| 12 MP JPEG, 4.9 MB | 28 KB WebP | 0.9 MB WebP | ~19% |
+| 48 MP JPEG, 17.8 MB | 15 KB WebP | 0.5 MB WebP | ~3% |
+
+Each photo therefore costs 103–120% of its original's storage, and the uploader sends that much. In return, everyone viewing a gallery downloads under 1% of the original per card. The original is also there to re-generate variants later, for example with a better encoder.
+
+**Small originals.** If a photo already fits the detail size (2048 px), its "detail" would only be a re-encode. When that re-encode comes out no smaller than the original, the browser skips it: the detail row points at the original's key and nothing extra is uploaded. A 1500×2000 WebP went from 3 stored files (936 KB) to 2 (465 KB). This applies only to JPEG, PNG and WebP originals; a GIF would animate on the photo page, and not every browser shows HEIC/AVIF. The server checks the original's real header size against the declared size, allowing width and height to swap for EXIF-rotated JPEGs.
+
+**Older photos** (uploaded before variants existed) have no `photo_variants` rows. Pages fall back to the original for them, so no migration of existing files is needed.
+
+### Formats and browsers
+
+- **WebP vs. JPEG.** Chromium and Firefox encode WebP. Safari, including iOS Safari as tested on iOS 18.3, can't: `canvas.toBlob('image/webp')` silently returns PNG. The code labels each Blob by its actual `blob.type`. When the preferred type doesn't come back, it switches to JPEG at the same quality and shows a notice; it never sends PNG bytes labelled as WebP. The server re-checks the bytes either way.
+- **Why JPEG rather than a WebAssembly WebP encoder.** This project has no JS build step. A maintained WASM encoder (for example `@jsquash/webp`, from libwebp) would add a vendored ~300 KB+ `.wasm` file to keep updated, slow the first upload on phones, and add memory pressure on iOS. Canvas JPEG is built into every browser, and at 0.90 the detail image keeps fine detail. It came out 30–50% larger than WebP in testing. Revisit WASM if Safari's share of uploads makes that storage matter.
+- **HEIC/HEIF.** The file picker doesn't list HEIC, so iOS converts photos to JPEG as they're picked. A HEIC dropped or picked on a desktop is decoded if the browser can (Safari); otherwise the user gets an explicit "export as JPEG" message.
+- **Animated GIF/WebP/APNG.** Variants show the first frame, a notice says so, and the original keeps the animation for Download.
+- **Transparency.** WebP variants keep alpha. The JPEG fallback puts transparent areas on white.
 
 ## Local development
 
@@ -24,8 +64,11 @@ cp .env.example .env          # defaults are local-only; set SECRET_KEY
 uv sync
 uv run flask --app app init-db
 uv run flask --app app run --port 5050
-uv run pytest
+uv run pytest                       # Flask, upload API, header sniffing
+node --test 'tests/js/*.test.js'    # browser preprocessing helpers
 ```
+
+`init-db` applies every file in `migrations/`. They're idempotent, so re-running it on an existing database is safe.
 
 The dev sign-in (`/auth/dev-login`) works only when both `DEV_LOGIN=1` and Flask debug are on.
 
@@ -35,7 +78,7 @@ The dev sign-in (`/auth/dev-login`) works only when both `DEV_LOGIN=1` and Flask
 
 ```bash
 wrangler d1 create photo-share                  # paste the id into wrangler.toml
-wrangler d1 migrations apply photo-share --remote
+wrangler d1 migrations apply photo-share --remote   # also applies 0002_photo_variants.sql to an existing DB
 ```
 
 Create a Cloudflare API token with **Account → D1 → Edit**. Then set `DB_BACKEND=d1`, `CF_ACCOUNT_ID`, `D1_DATABASE_ID` and `CF_API_TOKEN`.
@@ -51,7 +94,9 @@ wrangler r2 bucket cors set sbhx-photos --file r2-cors.json   # edit the origins
 
 - Create an R2 API token with **Object Read & Write** on the bucket. Set `STORAGE_BACKEND=r2`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`.
 - Galleries are public, so connect a custom domain to the bucket (for example `photos.sbhackerspace.com`) and set `R2_PUBLIC_BASE_URL`. Images then load from Cloudflare's CDN. If you leave it empty, the app signs a GET URL for every image instead.
-- If someone abandons an upload between steps 2 and 3, the object stays in the bucket with no row. An R2 lifecycle rule can clean these up, or you can live with them.
+- **CORS** (`r2-cors.json`) must allow your site's origin, the `PUT` method and the `content-type` header. Browsers send a preflight request for these uploads, so without this every PUT fails with a network error. The app reports that as a possible CORS problem. No other headers are needed: the signature is in the URL query string. Edit `origins` to your real domain before applying it.
+- **Abandoned uploads.** Run `uv run flask --app app cleanup-uploads` daily, for example from cron. It deletes objects under `users/` that are older than `ORPHAN_MAX_AGE_HOURS` (default 24) and that no photo or variant row references. Use `--dry-run` to preview. An R2 lifecycle rule can't do this, because it can't tell an orphan from a published photo.
+- **Public originals.** A public custom domain serves every key in the bucket, originals included. Their keys are unguessable, but anyone with a key can fetch it. To make originals private, add a Cloudflare WAF rule on that hostname blocking paths matching `*/original.*`. **Download original** would then need presigned GETs from the S3 endpoint, which it already uses.
 
 ### 3. Authentik
 
@@ -79,7 +124,7 @@ Put it behind HTTPS (a Cloudflare Tunnel works well) and set `SESSION_COOKIE_SEC
 |---|---|---|
 | `/` | public | Hero and latest uploads from everyone |
 | `/u/<username>` | public | A member's gallery |
-| `/photos/<id>` | public | Photo, metadata, download link |
+| `/photos/<id>` | public | Detail image, metadata, download link for the original |
 | `/upload` | signed in | Upload form |
 | `/photos/<id>/edit` | owner | Edit title and description, or delete |
 | `/settings` | signed in | Display name and bio |

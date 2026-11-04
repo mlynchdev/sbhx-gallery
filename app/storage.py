@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
 from flask import (
     Blueprint,
@@ -26,6 +28,12 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 class ObjectInfo:
     size: int
     content_type: str
+
+
+@dataclass
+class ListedObject:
+    key: str
+    last_modified: datetime
 
 
 class R2Storage:
@@ -63,6 +71,16 @@ class R2Storage:
 
     def delete(self, key: str) -> None:
         self.s3.delete_object(Bucket=self.bucket, Key=key)
+
+    def read_prefix(self, key: str, length: int) -> bytes:
+        r = self.s3.get_object(Bucket=self.bucket, Key=key, Range=f"bytes=0-{length - 1}")
+        return r["Body"].read()
+
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]:
+        pages = self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix)
+        for page in pages:
+            for obj in page.get("Contents", []):
+                yield ListedObject(obj["Key"], obj["LastModified"])
 
     def view_url(self, key: str) -> str:
         if self.public_base:
@@ -113,6 +131,17 @@ class LocalStorage:
         path = self._path(key)
         path.unlink(missing_ok=True)
         path.with_name(path.name + ".meta").unlink(missing_ok=True)
+
+    def read_prefix(self, key: str, length: int) -> bytes:
+        with self._path(key).open("rb") as f:
+            return f.read(length)
+
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]:
+        for path in sorted(self.root.rglob("*")):
+            key = path.relative_to(self.root).as_posix()
+            if path.is_file() and not key.endswith(".meta") and key.startswith(prefix):
+                mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+                yield ListedObject(key, mtime)
 
     def view_url(self, key: str) -> str:
         return url_for("local_storage.get_object", key=key)

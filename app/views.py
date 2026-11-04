@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import json
 import re
-import uuid
 
 from flask import (
     Blueprint,
@@ -9,7 +9,6 @@ from flask import (
     current_app,
     flash,
     g,
-    jsonify,
     redirect,
     render_template,
     request,
@@ -29,8 +28,18 @@ BIO_MAX = 1000
 
 
 @bp.app_template_global()
-def photo_src(photo: dict) -> str:
-    return storage().view_url(photo["object_key"])
+def photo_src(photo: dict, kind: str = "detail") -> str:
+    """URL of a photo's variant, or of the original for photos uploaded
+    before variants existed."""
+    key = photo.get(f"{kind}_key") or photo["object_key"]
+    return storage().view_url(key)
+
+
+@bp.app_template_global()
+def photo_dims(photo: dict, kind: str) -> str:
+    """width/height attributes when known, so the browser reserves space."""
+    w, h = photo.get(f"{kind}_width"), photo.get(f"{kind}_height")
+    return f'width="{w}" height="{h}"' if w and h else ""
 
 
 @bp.app_template_global()
@@ -56,7 +65,7 @@ def date(iso: str) -> str:
     return iso[:10] if iso else ""
 
 
-def _clean_photo_fields(data) -> tuple[str, str, str | None]:
+def clean_photo_fields(data) -> tuple[str, str, str | None]:
     title = (data.get("title") or "").strip()
     description = (data.get("description") or "").strip()
     if not title:
@@ -100,64 +109,27 @@ def photo_detail(photo_id: int):
     return render_template("photos/detail.html", photo=photo)
 
 
-# ----- upload flow -----
-# 1. Browser asks /api/uploads for a presigned PUT URL.
-# 2. Browser PUTs the file straight to R2.
-# 3. Browser posts the metadata to /api/photos; we confirm the object exists
-#    in R2 (and its size/type) before writing the D1 row.
+# ----- upload page (API lives in uploads.py) -----
 
 @bp.get("/upload")
 @login_required
 def upload():
     cfg = current_app.config
+    client_config = {
+        "variants": cfg["IMAGE_VARIANTS"],
+        "preferredType": cfg["VARIANT_PREFERRED_TYPE"],
+        "fallbackType": cfg["VARIANT_FALLBACK_TYPE"],
+        "variantTypes": sorted(cfg["VARIANT_CONTENT_TYPES"]),
+        "originalTypes": sorted(cfg["ALLOWED_CONTENT_TYPES"]),
+        "maxOriginalBytes": cfg["MAX_UPLOAD_BYTES"],
+        "maxVariantBytes": cfg["MAX_VARIANT_BYTES"],
+        "reusableOriginalTypes": list(cfg["REUSABLE_ORIGINAL_TYPES"]),
+    }
     return render_template(
         "photos/upload.html",
-        allowed_types=sorted(cfg["ALLOWED_CONTENT_TYPES"]),
+        client_config=json.dumps(client_config),
         max_bytes=cfg["MAX_UPLOAD_BYTES"],
     )
-
-
-@bp.post("/api/uploads")
-@login_required
-def create_upload():
-    cfg = current_app.config
-    data = request.get_json(silent=True) or {}
-    content_type = data.get("content_type", "")
-    size = data.get("size")
-    ext = cfg["ALLOWED_CONTENT_TYPES"].get(content_type)
-    if ext is None:
-        return jsonify(error="Unsupported file type. Use JPEG, PNG, WebP or GIF."), 400
-    if not isinstance(size, int) or size <= 0 or size > cfg["MAX_UPLOAD_BYTES"]:
-        return jsonify(error=f"File must be under {filesize(cfg['MAX_UPLOAD_BYTES'])}."), 400
-
-    key = f"users/{g.user['id']}/{uuid.uuid4().hex}.{ext}"
-    return jsonify(key=key, upload_url=storage().presign_put(key, content_type), content_type=content_type)
-
-
-@bp.post("/api/photos")
-@login_required
-def create_photo():
-    cfg = current_app.config
-    data = request.get_json(silent=True) or {}
-    key = data.get("key", "")
-    title, description, error = _clean_photo_fields(data)
-    if error:
-        return jsonify(error=error), 400
-
-    if not re.fullmatch(rf"users/{g.user['id']}/[0-9a-f]{{32}}\.[a-z]+", key):
-        return jsonify(error="Invalid upload key."), 400
-    if models.key_in_use(key):
-        return jsonify(error="This upload was already saved."), 409
-
-    info = storage().head(key)
-    if info is None:
-        return jsonify(error="Upload not found. Try again."), 400
-    if info.size > cfg["MAX_UPLOAD_BYTES"] or info.content_type not in cfg["ALLOWED_CONTENT_TYPES"]:
-        storage().delete(key)
-        return jsonify(error="Uploaded file was rejected (too large or wrong type)."), 400
-
-    photo_id = models.create_photo(g.user["id"], title, description, key, info.content_type, info.size)
-    return jsonify(id=photo_id, url=url_for("main.photo_detail", photo_id=photo_id)), 201
 
 
 # ----- owner actions -----
@@ -167,7 +139,7 @@ def create_photo():
 def edit_photo(photo_id: int):
     photo = _owned_photo_or_404(photo_id)
     if request.method == "POST":
-        title, description, error = _clean_photo_fields(request.form)
+        title, description, error = clean_photo_fields(request.form)
         if error:
             flash(error, "error")
             photo = {**photo, "title": title, "description": description}
@@ -182,8 +154,11 @@ def edit_photo(photo_id: int):
 @login_required
 def delete_photo(photo_id: int):
     photo = _owned_photo_or_404(photo_id)
+    # A variant may point at the original, so de-duplicate.
+    keys = dict.fromkeys([photo["object_key"], *models.variant_keys(photo_id)])
     models.delete_photo(photo_id)
-    storage().delete(photo["object_key"])
+    for key in keys:
+        storage().delete(key)
     flash("Photo deleted.", "success")
     return redirect(url_for("main.profile", username=g.user["username"]))
 

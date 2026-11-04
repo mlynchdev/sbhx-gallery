@@ -11,7 +11,7 @@
   <div class="container narrow">
     <form method="post" class="contact-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <img class="edit-preview" src="{{ photo_src(photo) }}" alt="">
+      <img class="edit-preview" src="{{ photo_src(photo, 'thumb') }}" {{ photo_dims(photo, 'thumb') | safe }} alt="">
       <div class="form-group">
         <label class="form-label" for="title">Title</label>
         <input class="form-input" id="title" name="title" maxlength="120" required value="{{ photo.title }}">

@@ -11,18 +11,23 @@
 <section class="section">
   <div class="container narrow">
     <form id="uploadForm" class="contact-form"
-          data-presign-url="{{ url_for('main.create_upload') }}"
-          data-save-url="{{ url_for('main.create_photo') }}"
-          data-max-bytes="{{ max_bytes }}"
-          data-allowed="{{ allowed_types | join(',') }}">
+          data-presign-url="{{ url_for('uploads.create_upload') }}"
+          data-save-url="{{ url_for('uploads.create_photo') }}"
+          data-abort-url="{{ url_for('uploads.abort_upload') }}"
+          data-config="{{ client_config }}">
       <label class="dropzone" id="dropzone">
-        <input type="file" id="fileInput" name="file" accept="{{ allowed_types | join(',') }}" required class="sr-only">
+        {# No HEIC in accept: iOS then converts HEIC photos to JPEG when picking. #}
+        <input type="file" id="fileInput" name="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" class="sr-only">
         <img id="preview" alt="" hidden>
         <span class="dropzone-prompt" id="dropzonePrompt">
           <span class="mono text-primary">drop image here</span>
-          <span>or click to choose &middot; JPEG, PNG, WebP, GIF &middot; up to {{ max_bytes | filesize }}</span>
+          <span>or click to choose &middot; JPEG, PNG, WebP, GIF, HEIC &middot; up to {{ max_bytes | filesize }}</span>
         </span>
       </label>
+
+      <p class="upload-status mono" id="uploadStatus" role="status" aria-live="polite" hidden></p>
+      <ul class="variant-summary mono" id="variantSummary" hidden></ul>
+      <p class="upload-notice" id="uploadNotice" hidden></p>
 
       <div class="form-group">
         <label class="form-label" for="title">Title</label>
@@ -42,4 +47,7 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/upload.js') }}"></script>{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/imageprep.js') }}"></script>
+<script src="{{ url_for('static', filename='js/upload.js') }}"></script>
+{% endblock %}
