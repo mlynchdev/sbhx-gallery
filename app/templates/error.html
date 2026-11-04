@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ error.code }}{% endblock %}
+{% block content %}
+<section class="page-header error-page">
+  <div class="container">
+    <p class="hero-tagline">// error {{ error.code }}</p>
+    <h1>{{ error.name }}</h1>
+    <p>{{ error.description }}</p>
+    <a href="{{ url_for('main.index') }}" class="btn btn-outline mt-xl">Back to the gallery</a>
+  </div>
+</section>
+{% endblock %}

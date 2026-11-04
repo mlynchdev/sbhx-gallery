@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Upload a Part{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div class="container">
+    <h1>Upload a Part</h1>
+    <p>Show off what you made. Photos go straight to storage from your browser.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container narrow">
+    <form id="uploadForm" class="contact-form"
+          data-presign-url="{{ url_for('main.create_upload') }}"
+          data-save-url="{{ url_for('main.create_photo') }}"
+          data-max-bytes="{{ max_bytes }}"
+          data-allowed="{{ allowed_types | join(',') }}">
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" name="file" accept="{{ allowed_types | join(',') }}" required class="sr-only">
+        <img id="preview" alt="" hidden>
+        <span class="dropzone-prompt" id="dropzonePrompt">
+          <span class="mono text-primary">drop image here</span>
+          <span>or click to choose &middot; JPEG, PNG, WebP, GIF &middot; up to {{ max_bytes | filesize }}</span>
+        </span>
+      </label>
+
+      <div class="form-group">
+        <label class="form-label" for="title">Title</label>
+        <input class="form-input" id="title" name="title" maxlength="120" required placeholder="6061 aluminum bracket">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="description">Description</label>
+        <textarea class="form-textarea" id="description" name="description" maxlength="4000"
+                  placeholder="Machine, tooling, feeds and speeds, lessons learned..."></textarea>
+      </div>
+
+      <div class="progress" id="progress" hidden><div class="progress-bar" id="progressBar"></div></div>
+      <p class="form-error" id="formError" role="alert" hidden></p>
+
+      <button type="submit" class="btn btn-primary btn-circuit" id="submitBtn">Upload</button>
+    </form>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/upload.js') }}"></script>{% endblock %}

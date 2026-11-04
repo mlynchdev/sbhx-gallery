@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Dev sign-in{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div class="container">
+    <h1>Dev Sign-in</h1>
+    <p>Local development only. Production sign-in goes through Authentik.</p>
+  </div>
+</section>
+<section class="section">
+  <div class="container narrow">
+    <form method="post" class="contact-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-group">
+        <label class="form-label" for="username">Username</label>
+        <input class="form-input" id="username" name="username" required autofocus placeholder="machinist">
+      </div>
+      <button type="submit" class="btn btn-primary">Sign in</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

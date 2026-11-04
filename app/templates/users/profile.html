@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ user.display_name }}{% endblock %}
+{% block content %}
+<section class="page-header profile-header">
+  <div class="container">
+    <div class="avatar" aria-hidden="true">{{ user.display_name[:1] | upper }}</div>
+    <h1>{{ user.display_name }}</h1>
+    <p class="profile-handle mono">@{{ user.username }}</p>
+    {% if user.bio %}<p class="profile-bio">{{ user.bio }}</p>{% endif %}
+    <div class="profile-stats">
+      <div class="stat-item">
+        <div class="stat-number">{{ photos | length }}</div>
+        <div class="stat-label">Parts</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">{{ user.created_at[:4] }}</div>
+        <div class="stat-label">Member since</div>
+      </div>
+    </div>
+    {% if current_user and current_user.id == user.id %}
+      <div class="hero-ctas mt-xl">
+        <a href="{{ url_for('main.upload') }}" class="btn btn-primary">Upload a Part</a>
+        <a href="{{ url_for('main.settings') }}" class="btn btn-ghost">Edit Profile</a>
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    {% if photos %}
+      {% include "_gallery.html" %}
+    {% else %}
+      <div class="empty-state card">
+        <p class="mono">// gallery empty</p>
+        <p>{{ user.display_name }} hasn't posted any parts yet.</p>
+      </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

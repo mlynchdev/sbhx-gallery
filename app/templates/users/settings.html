@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div class="container">
+    <h1>Profile Settings</h1>
+    <p>Your public page lives at
+      <a class="mono" href="{{ url_for('main.profile', username=current_user.username) }}">/u/{{ current_user.username }}</a>
+    </p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container narrow">
+    <form method="post" class="contact-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-group">
+        <label class="form-label" for="display_name">Display name</label>
+        <input class="form-input" id="display_name" name="display_name" maxlength="80" required
+               value="{{ request.form.display_name or current_user.display_name }}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="bio">Bio</label>
+        <textarea class="form-textarea" id="bio" name="bio" maxlength="1000"
+                  placeholder="What do you like to make? Favorite machine?">{{ request.form.bio or current_user.bio }}</textarea>
+      </div>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

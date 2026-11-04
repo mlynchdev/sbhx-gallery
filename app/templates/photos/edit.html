@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ photo.title }}{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div class="container">
+    <h1>Edit Part</h1>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container narrow">
+    <form method="post" class="contact-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <img class="edit-preview" src="{{ photo_src(photo) }}" alt="">
+      <div class="form-group">
+        <label class="form-label" for="title">Title</label>
+        <input class="form-input" id="title" name="title" maxlength="120" required value="{{ photo.title }}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="description">Description</label>
+        <textarea class="form-textarea" id="description" name="description" maxlength="4000">{{ photo.description }}</textarea>
+      </div>
+      <div class="photo-actions">
+        <button type="submit" class="btn btn-primary">Save</button>
+        <a href="{{ url_for('main.photo_detail', photo_id=photo.id) }}" class="btn btn-ghost">Cancel</a>
+      </div>
+    </form>
+
+    <form method="post" action="{{ url_for('main.delete_photo', photo_id=photo.id) }}" class="danger-zone"
+          onsubmit="return confirm('Delete this photo permanently?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div>
+        <h4>Delete photo</h4>
+        <p>Removes the image from storage and your gallery. This can't be undone.</p>
+      </div>
+      <button type="submit" class="btn btn-danger">Delete</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

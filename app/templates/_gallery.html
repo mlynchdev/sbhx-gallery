@@ -1,0 +1,15 @@
+{# Expects `photos`; set `show_author` to label each card with its maker. #}
+<div class="gallery reveal-stagger">
+  {% for photo in photos %}
+    <a class="gallery-card" href="{{ url_for('main.photo_detail', photo_id=photo.id) }}">
+      <div class="gallery-image">
+        <img src="{{ photo_src(photo) }}" alt="{{ photo.title }}" loading="lazy">
+      </div>
+      <div class="gallery-content">
+        {% if show_author %}<span class="gallery-author">@{{ photo.username }}</span>{% endif %}
+        <h3 class="gallery-title">{{ photo.title }}</h3>
+        <span class="gallery-date">{{ photo.created_at | date }}</span>
+      </div>
+    </a>
+  {% endfor %}
+</div>

@@ -1,0 +1,10 @@
+# Used only for D1 migrations and R2 bucket config via wrangler; the Flask app
+# itself runs outside Workers and talks to D1/R2 over their HTTP APIs.
+name = "photo-share"
+compatibility_date = "2026-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "photo-share"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Member Gallery{% endblock %}
+{% block content %}
+<section class="hero hero-compact">
+  <div class="hero-bg circuit-bg">
+    <object type="image/svg+xml" data="{{ url_for('static', filename='img/circuit-bg.svg') }}" aria-hidden="true"></object>
+  </div>
+  <div class="hero-content">
+    <h1 class="hero-logo hero-logo-animated">Shop Floor</h1>
+    <p class="hero-tagline">think it. build it. break it.</p>
+    <p class="hero-subtitle">Parts machined, milled, turned and printed by SBHX members.</p>
+    <div class="hero-ctas">
+      {% if current_user %}
+        <a href="{{ url_for('main.upload') }}" class="btn btn-primary btn-circuit">Upload a Part</a>
+        <a href="{{ url_for('main.profile', username=current_user.username) }}" class="btn btn-outline btn-circuit">My Gallery</a>
+      {% else %}
+        <a href="{{ url_for('auth.login') }}" class="btn btn-primary btn-circuit">Sign in to Share</a>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <h2>Latest Work</h2>
+      <p>Fresh off the mill, lathe and laser.</p>
+    </div>
+    {% if photos %}
+      {% with show_author = true %}{% include "_gallery.html" %}{% endwith %}
+    {% else %}
+      <div class="empty-state card">
+        <p class="mono">// no parts yet</p>
+        <p>Be the first to post something you've made.</p>
+      </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
